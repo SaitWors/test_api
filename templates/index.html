@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Планировщик Маршрутов</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body, .container {
+            background-color: #f9f9f9;
+            color: #333;
+            font-family: Arial, sans-serif;
+        }
+        #map { height: 500px; margin-top: 20px; display: none; }
+        .container { max-width: 1000px; margin: auto; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; display: none; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .form-group { margin-bottom: 15px; }
+        .dark-mode {
+            background-color: #2e2e2e;
+            color: #cccccc;
+        }
+        .dark-mode th {
+            background-color: #444444;
+        }
+        .dark-mode td, .dark-mode input {
+            background-color: #3e3e3e;
+            color: #cccccc;
+        }
+        .dark-mode button {
+            background-color: #007bff;
+        }
+        .loader {
+            border: 16px solid #f3f3f3; 
+            border-radius: 50%;
+            border-top: 16px solid #3498db; 
+            width: 120px;
+            height: 120px;
+            animation: spin 2s linear infinite;
+            display: none;
+            margin: auto;
+        }
+        .pokeball {
+            width: 50px;
+            height: 50px;
+            background: #ef5350;
+            border: 5px solid #000;
+            border-radius: 50%;
+            position: relative;
+            animation: spin 1s linear infinite;
+            display: none;
+            margin: auto;
+        }
+        .pokeball::before, .pokeball::after {
+            content: '';
+            position: absolute;
+            background: #fff;
+            border: 5px solid #000;
+        }
+        .pokeball::before {
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            border-radius: 0 0 50% 50%;
+            transform: translateY(-50%);
+        }
+        .pokeball::after {
+            top: calc(50% - 10px);
+            left: calc(50% - 10px);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="mainTitle">Планировщик Маршрутов</h1>
+        <button id="toggleDarkMode">Переключить Тёмный Режим</button>
+        <form id="orderForm">
+            <div class="form-group">
+                <label for="numOrders">Введите количество заказов:</label>
+                <input type="number" id="numOrders" min="1" class="form-control">
+            </div>
+            <button type="button" onclick="generateTable()">Создать Таблицу</button>
+            <table id="orderTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Адрес</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>0</td>
+                        <td>Москва, ул. Нижегородская дом 50 (ТЦ ТРИ Д)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <button type="button" onclick="submitForm()">Рассчитать Маршрут</button>
+        </form>
+        <input type="file" id="imageInput" accept="image/*">
+        <button type="button" onclick="processImage()">Обработать Изображение</button>
+        <div id="map"></div>
+        <div class="pokeball" id="loader"></div>
+        <pre id="debugOutput"></pre>
+    </div>
+    
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.1/dist/tesseract.min.js"></script>
+    <script>
+        function showLoader() {
+            document.getElementById('loader').style.display = 'block';
+        }
+
+        function hideLoader() {
+            document.getElementById('loader').style.display = 'none';
+        }
+
+        function generateTable() {
+            showLoader();
+            setTimeout(() => {
+                const numOrders = document.getElementById('numOrders').value;
+                const tableBody = document.getElementById('orderTable').getElementsByTagName('tbody')[0];
+                // Удаление всех строк, кроме первой
+                while (tableBody.rows.length > 1) {
+                    tableBody.deleteRow(1);
+                }
+
+                for (let i = 0; i < numOrders; i++) {
+                    const row = tableBody.insertRow();
+                    const cell1 = row.insertCell(0);
+                    const cell2 = row.insertCell(1);
+                    cell1.innerHTML = i + 1;
+                    cell2.innerHTML = `<input type="text" name="address${i}" class="form-control" placeholder="Москва, ">`;
+                }
+
+                document.getElementById('orderTable').style.display = 'table';
+                hideLoader();
+            }, 1000);
+        }
+
+        function submitForm() {
+            showLoader();
+            const numOrders = document.getElementById('numOrders').value;
+            const tableBody = document.getElementById('orderTable').getElementsByTagName('tbody')[0];
+            const orders = [];
+            for (let i = 1; i <= numOrders; i++) { // Начало с 1, чтобы пропустить "ул. Нижегородская дом 50"
+                const address = tableBody.rows[i].cells[1].getElementsByTagName('input')[0].value;
+                orders.push({ id: i, address: `Москва, ${address}` });
+            }
+
+            fetch('/calculate_route', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ orders: orders })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const map = L.map('map').setView([55.751244, 37.618423], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                }).addTo(map);
+
+                const route = data.route;
+                const distances = data.distances;
+                if (route.length > 0) {
+                    for (let i = 0; i < route.length; i++) {
+                        const marker = L.marker([route[i].lat, route[i].lon]).addTo(map)
+                            .bindPopup(route[i].address)
+                            .openPopup();
+                    }
+                    for (let i = 0; i < route.length - 1; i++) {
+                        const polyline = L.polyline([
+                            [route[i].lat, route[i].lon],
+                            [route[i+1].lat, route[i+1].lon]
+                        ], { color: 'blue' }).addTo(map);
+
+                        if (distances[i] !== "Distance calculation failed") {
+                            polyline.bindPopup(`${distances[i]} м`).openPopup();
+                        } else {
+                            polyline.bindPopup(`Distance calculation failed`).openPopup();
+                        }
+                    }
+                }
+                document.getElementById('map').style.display = 'block';
+                hideLoader();
+            });
+        }
+
+        // Toggle Dark Mode
+        document.getElementById('toggleDarkMode').addEventListener('click', function() {
+            document.body.classList.toggle('dark-mode');
+            document.querySelector('.container').classList.toggle('dark-mode');
+            document.querySelector('h1').classList.toggle('dark-mode');
+        });
+
+        // Image Processing
+        function processImage() {
+            const input = document.getElementById('imageInput');
+            if (input.files && input.files[0]) {
+                showLoader();
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    Tesseract.recognize(e.target.result, 'rus')
+                    .then(({ data: { text } }) => {
+                        const debugOutput = document.getElementById('debugOutput');
+                        debugOutput.innerHTML = text; // Выводим распознанный текст для отладки
+                        
+                        const lines = text.split('\n').filter(line => line.includes('ул') || line.includes('просп') || line.includes('пл') || line.includes('шоссе'));
+                        const addresses = lines.map(line => {
+                            const match = line.match(/.*?(ул\.|просп\.|пл\.|шоссе|бульв\.|проезд|пер\.|наб\.|вал|кв\.|д\.|корп\.|стр\.)\s*[^\d]*\d+[^,]*/i);
+                            if (match) {
+                                return match[0];
+                            }
+                            return null;
+                        }).filter(address => address !== null);
+
+                        const tableBody = document.getElementById('orderTable').getElementsByTagName('tbody')[0];
+                        addresses.forEach((address, index) => {
+                            const row = tableBody.insertRow();
+                            const cell1 = row.insertCell(0);
+                            const cell2 = row.insertCell(1);
+                            cell1.innerHTML = tableBody.rows.length;
+                            cell2.innerHTML = `<input type="text" name="address${index}" class="form-control" value="${address.trim()}">`;
+                        });
+
+                        document.getElementById('orderTable').style.display = 'table';
+                        hideLoader();
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        hideLoader();
+                    });
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+    </script>
+</body>
+</html>
